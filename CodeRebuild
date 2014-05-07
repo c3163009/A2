@@ -1,0 +1,57 @@
+#include "spi_sd.h"
+#include <stdlib.h>
+#include <stdio.h>
+
+static struct tag1 {
+	alt_u8  Label;
+	alt_u8  SecPerCluster;
+	alt_u32 DataStart;
+	alt_u32 FatAddress;
+	alt_u32  RootDirectory;
+} Partition[4]
+= { { 'C', 0, 0, 0, 0 },
+{ 'D', 0, 0, 0, 0 },
+{ 'E', 0, 0, 0, 0 },
+{ 'F', 0, 0, 0, 0 } };
+
+int main() {
+
+	alt_u8 buf[512];            //Used to read data from the SD card;
+	alt_u32 addr[4], size[4];   //Used to store the starting address for file partition table, and their sizes;
+	alt_u8 i = 0;
+	alt_u8 * addy = addr[0];
+	//Initialize SPI - SD communication
+	if (if_initInterface()) {
+		printf("No SD Card detected!\n");
+		return -1;
+	}
+	//Reads in MBR to buffer
+	if (sd_readSector(0, buf) != 0){
+		printf("Read MBR FAILED");   //Read MBR
+	}
+
+	//Reads partition table
+	for (i = 0; i<4; i++) {
+		addr[i] = *((alt_u32*)(buf + 446 + i * 16 + 8));  //SHOULD WORK Read the partition addresses;
+		size[i] = *((alt_u32*)(buf + 446 + i * 16 + 12)); //Read the size of the partition;
+	}
+
+	//Reads Boot Sector
+	for (i = 0; i<4; i++) {
+
+		if (size[i] == 0) continue;
+
+		printf("Drive %c detected.\n", Partition[i].Label);
+
+		sd_readSector(addr[i], buf);  //Read the boot sector of partition i into buf;
+
+		Partition[i].SecPerCluster = buf[13];
+		Partition[i].RootDirectory = *((alt_u32*)(buf + 0x2c));
+		Partition[i].FatAddress = addr[i] + *((alt_u16*)(buf + 0x0e));
+		Partition[i].DataStart = Partition[i].FatAddress + buf[16] * (*((alt_u32*)(buf + 0x24)));
+
+	}
+	printf("Finished");
+	while (1);
+	return(0);
+}
