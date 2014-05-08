@@ -117,21 +117,23 @@ int main() {
       return -1;
    }
 
-   if(sd_readSector(6,buf) !=0){
+   if(sd_readSector(0,buf) !=0){
 	   printf("Read MBR FAILED");   //Read MBR
    }
 
    //Read partition table
-   for (i=0; i<4; i++) {
-      addr[i] = *((alt_u32*)(buf + 446 + i*16));  //Read the partition addresses;
-      size[i] = *((alt_u32*)(buf + 446 + i*16 + 8)); //Read the size of the partition;
+   if(buf[510] == 0x55 && buf[511] == 0xaa){
+	   for (i=0; i<4; i++) {
+		 alt_u8 * addr = buf + 446 + i*16;  //Read the partition addresses;
+		 alt_u32 * a = (alt_u32 *)(addr+8); //Read the size of the partition;
+		 printf("Partition Address = %d, size = %d\n", a[0], a[1]);
+	   }
    }
-
+   else{
+	   printf("Invalid MBR read");
+   }
    //Read the boot sector of 4 primary partitions;
    for (i=0; i<4; i++) {
-
-      if (size[i] == 0) continue;
-
       printf("Drive %c detected.\n",Partition[i].Label);
 
       sd_readSector(addr[i], buf);  //Read the boot sector of partition i into buf;
@@ -142,7 +144,7 @@ int main() {
       Partition[i].DataStart = Partition[i].FatAddress + buf[16] * (*((alt_u32*)(buf + 0x24)));
 
    }
-      list_file(0, Partition[0].RootDirectory);
+     // list_file(0, Partition[0].RootDirectory);
    printf("Finished");
    while(1);
    return(0);
