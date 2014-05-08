@@ -1,57 +1,167 @@
 #include "spi_sd.h"
 #include <stdlib.h>
-#include <stdio.h>
 
 static struct tag1 {
-	alt_u8  Label;
-	alt_u8  SecPerCluster;
-	alt_u32 DataStart;
-	alt_u32 FatAddress;
-	alt_u32  RootDirectory;
+   alt_u8  Label;
+   alt_u8  SecPerCluster;
+   alt_u32 DataStart;
+   alt_u32 FatAddress;
+   alt_u32  RootDirectory;
 } Partition[4]
-= { { 'C', 0, 0, 0, 0 },
-{ 'D', 0, 0, 0, 0 },
-{ 'E', 0, 0, 0, 0 },
-{ 'F', 0, 0, 0, 0 } };
+= {{'C',0,0,0,0},
+   {'D',0,0,0,0},
+   {'E',0,0,0,0},
+   {'F',0,0,0,0}};
+
+//Read cluster, operate on data and find out the next cluster from FAT;
+void file_handler(alt_u8 partid, alt_u32 cl_no, alt_u8 (*f) (alt_u32, alt_u8*) ) {
+
+   alt_u32 size = Partition[partid].SecPerCluster * 512;  //size of the cluster;
+   alt_u8 buffer = malloc(size);
+
+   while (1) {
+      //Read the data from cluster cl_no;
+      alt_u8 i;
+
+      //The cluster starts at sector number
+      //In the data region, the first two clusters do not exist
+      alt_u32 sec_address = Partition[partid].DataStart + Partition[partid].SecPerCluster * (cl_no - 2);
+
+      for (i=0; i<Partition[partid].SecPerCluster; i++) {
+         sd_readSector(sec_address+i, buffer + i*512);
+      }
+
+      //Do whatever I like with the data;
+      alt_u8 retval = f(size, buffer);
+      if (retval == 0) break;
+
+      //Find out the next cluster;
+      sd_readSector(Partition[partid].FatAddress + cl_no / 128, buffer);   //Page in the FAT table;
+      cl_no = *((alt_u32*) (buffer + cl_no % 128));
+
+      if (cl_no > 0x0fffffef) break;  //Reach the end of the file;
+   }
+
+   free(buffer);
+}
+
+//Browse the content under a particular directory;
+alt_u8 Browse(alt_u32 size, alt_u8* buffer) {
+
+   //buffer has the copy of ? directory entries;
+   alt_u32 num_entries = size/32;   //32 bytes per directory entry;
+
+   alt_u32 i;
+
+   for (i=0; i<num_entries; i++) {
+      alt_u8* pr = buffer + i*32;
+
+      //pr[0] - pr[31] is a directory entry;
+      if (pr[0] == 0) { return 0; }
+      else if (pr[0] == 0xe5) {}
+      else if (pr[0] == 0x05) {}
+      else if (pr[11] == 0x0f) {} //Long file names;
+      else {
+         if (pr[11] & 0x10) {      //A subdirectory
+            printf("*.8s ", pr);
+            printf("\t(Folder)\n");
+         }
+         else
+            printf("*.8s . %.3s", pr, pr+8);   //Print out the file name
+            printf("\n");
+      }
+   }
+
+   return 1;
+
+}
+
+
+//List all the files and entries under a particular directory;
+void list_file(alt_u8 partid, alt_u32 cl_no) {
+
+   file_handler(partid, cl_no, Browse);
+
+}
+
+//Display the content of a ASCII text file;
+alt_u8 Show(alt_u32 size, alt_u8* buffer) {
+   alt_u32 i;
+   for (i=0; i<size; i++) {
+      printf("%c",buffer[i]);
+   }
+
+   return 1;
+}
+
+void show_file(alt_u8 partid, alt_u32 cl_no) {
+
+   file_handler(partid, cl_no, Show);
+
+}
+
+
+
 
 int main() {
 
-	alt_u8 buf[512];            //Used to read data from the SD card;
-	alt_u32 addr[4], size[4];   //Used to store the starting address for file partition table, and their sizes;
-	alt_u8 i = 0;
-	alt_u8 * addy = addr[0];
-	//Initialize SPI - SD communication
-	if (if_initInterface()) {
-		printf("No SD Card detected!\n");
-		return -1;
-	}
-	//Reads in MBR to buffer
-	if (sd_readSector(0, buf) != 0){
-		printf("Read MBR FAILED");   //Read MBR
-	}
+   alt_u8 buf[512],i=0;            //Used to read data from the SD card;
+   alt_u32 addr[4], size[4];   //Used to store the starting address for file partition table, and their sizes;
 
-	//Reads partition table
-	for (i = 0; i<4; i++) {
-		addr[i] = *((alt_u32*)(buf + 446 + i * 16 + 8));  //SHOULD WORK Read the partition addresses;
-		size[i] = *((alt_u32*)(buf + 446 + i * 16 + 12)); //Read the size of the partition;
-	}
 
-	//Reads Boot Sector
-	for (i = 0; i<4; i++) {
+   //Initialize SPI - SD communication
+   if (if_initInterface()) {
+      printf("No SD Card detected!\n");
+      return -1;
+   }
 
-		if (size[i] == 0) continue;
+   sd_readSector(0,buf);   //Read MBR
 
-		printf("Drive %c detected.\n", Partition[i].Label);
+   //Read partition table
 
-		sd_readSector(addr[i], buf);  //Read the boot sector of partition i into buf;
+      alt_u8* ptr = (alt_u8*)buf[445];  //Read the partition addresses;
+      alt_u32* a=(alt_u32*)(ptr+8);
+      size[i] = *((alt_u32*)(buf+458)); //Read the size of the partition;
 
-		Partition[i].SecPerCluster = buf[13];
-		Partition[i].RootDirectory = *((alt_u32*)(buf + 0x2c));
-		Partition[i].FatAddress = addr[i] + *((alt_u16*)(buf + 0x0e));
-		Partition[i].DataStart = Partition[i].FatAddress + buf[16] * (*((alt_u32*)(buf + 0x24)));
+   i=0;
+   printf("t %x | %x\n",addr[i],size[i]);
+   //Read the boot sector of 4 primary partitions;
 
-	}
-	printf("Finished");
-	while (1);
-	return(0);
+
+
+      printf("Drive %c detected.\n",Partition[i].Label);
+
+      sd_readSector(a, buf);  //Read the boot sector of partition i into buf;
+
+      Partition[i].SecPerCluster = buf[13];
+      Partition[i].RootDirectory = *((alt_u32*)(buf + 0x2c));
+      Partition[i].FatAddress = addr[i] + *((alt_u16*)(buf+0x0e));
+      Partition[i].DataStart = Partition[i].FatAddress + buf[16] * (*((alt_u32*)(buf + 0x24)));
+      printf("%x | %x | %x\n",Partition[i].SecPerCluster,Partition[i].RootDirectory,Partition[i].FatAddress);
+
+      //if(sd_readSector(addr[i],buf)){printf("Failed\n"); return 0;}
+      	alt_u16 resv_sect = *((alt_u16*)(buf+14));
+      	alt_u32 fatAddress = addr[i] + resv_sect;
+      	alt_u32 sectorsPerFat = *((alt_u32*)(buf+36));
+      	alt_u8 numFats = *((alt_u8*)(buf+16));
+      	alt_u32 firstClusterStartAddress = fatAddress + numFats * sectorsPerFat;
+      	alt_u8 sectorsInCluster = *((alt_u8*)(buf+13));;
+      	alt_u32 rootStartCluster = *((alt_u32*)(buf+44));
+      	alt_u16 secsize = *((alt_u16*)(buf+11));
+      	printf("fatAddress %lu | %lu\n",fatAddress,Partition[i].FatAddress);
+      	printf("numfats %d\n",numFats);
+      	printf("sectorsPerFat %lu\n",sectorsPerFat);
+      	printf("rootStartCluster %lu\n",rootStartCluster);
+      	printf("firstClusterStartAddress %lu\n",firstClusterStartAddress);
+      	printf("sectorsInCluster %d | %d\n",sectorsInCluster,Partition[i].SecPerCluster);
+      	printf("sectorsize: %d\n",secsize);
+      	printf("resv_sect: %d\n",resv_sect);
+      	printf("%x | %x\n",buf[510],buf[511]);
+
+   //Read the directory and file allocation table;
+   //......
+
+   //list_file(0, Partition[0].RootDirectory);
+
 }
+
